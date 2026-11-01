@@ -1,0 +1,48 @@
+{
+  "packageName": "com.example.pickuppleos",
+  "appDescription": "A vehicle app that coordinates a private pickup with a contact and a passenger-selected pickup point.",
+  "invokeWord": "픽업메이트",
+  "version": "0.1.0",
+  "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "START_PICKUP",
+        "description": "Starts a pickup for a contact chosen by the driver.",
+        "component": "activity",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "contactName": {"type": "string", "description": "The name of the contact to pick up."},
+            "pickupTime": {"type": "string", "description": "The requested pickup time, if the driver said one."}
+          },
+          "required": ["contactName"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "CHOOSE_PICKUP_CONTACT",
+        "description": "Chooses one of multiple matching contacts after the app asks for clarification.",
+        "component": "activity",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "choiceIndex": {"type": "number", "description": "The one-based number of the matching contact chosen by the driver."}
+          },
+          "required": ["choiceIndex"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "CONFIRM_PICKUP_ROUTE",
+        "description": "Confirms the passenger's selected pickup point and requests vehicle navigation to it.",
+        "component": "activity",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+      }
+    }
+  ]
+}
