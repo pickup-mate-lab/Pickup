@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <uses-permission android:name="pleos.car.permission.STT_SERVICE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -20,7 +22,8 @@
             <intent-filter>
                 <action android:name="START_PICKUP" />
                 <action android:name="CHOOSE_PICKUP_CONTACT" />
-                <action android:name="CONFIRM_PICKUP_ROUTE" />
+                <action android:name="GET_PICKUP_STATUS" />
+                <action android:name="START_VOICE_REPLY" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

@@ -13,10 +13,18 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "contactName": {"type": "string", "description": "The name of the contact to pick up."},
-            "pickupTime": {"type": "string", "description": "The requested pickup time, if the driver said one."}
+            "contactName": {
+              "type": "string",
+              "description": "The name of the contact to pick up."
+            },
+            "pickupTime": {
+              "type": "string",
+              "description": "The requested pickup time, if the driver said one."
+            }
           },
-          "required": ["contactName"]
+          "required": [
+            "contactName"
+          ]
         }
       }
     },
@@ -29,19 +37,28 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "choiceIndex": {"type": "number", "description": "The one-based number of the matching contact chosen by the driver."}
+            "choiceIndex": {
+              "type": "number",
+              "description": "The one-based number of the matching contact chosen by the driver."
+            }
           },
-          "required": ["choiceIndex"]
+          "required": [
+            "choiceIndex"
+          ]
         }
       }
     },
     {
       "type": "function",
       "function": {
-        "name": "CONFIRM_PICKUP_ROUTE",
-        "description": "Confirms the passenger's selected pickup point and requests vehicle navigation to it.",
+        "name": "START_VOICE_REPLY",
+        "description": "Start a hands-free voice reply to the passenger in the current pickup. The app will ask for the message and confirm it before sending.",
         "component": "activity",
-        "parameters": {"type": "object", "properties": {}, "required": []}
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
       }
     }
   ]

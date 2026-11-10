@@ -23,7 +23,7 @@ from urllib.parse import unquote, urlsplit
 
 SESSION_SECONDS = 2 * 60 * 60
 MAX_BODY_BYTES = 8 * 1024
-SESSION_PATH = re.compile(r"^/api/sessions/([A-Za-z0-9_-]{6,40})(?:/(pickup|confirm|location|location-consent|finish))?$")
+SESSION_PATH = re.compile(r"^/api/sessions/([A-Za-z0-9_-]{6,40})(?:/(pickup|confirm|location|location-consent|message|finish))?$")
 PASSENGER_PATH = re.compile(r"^/p/([A-Za-z0-9_-]{6,40})/([A-Za-z0-9_-]{20,100})$")
 STATIC_DIR = Path(__file__).with_name("static")
 
@@ -66,6 +66,7 @@ class SessionStore:
             session["passengerLocation"] = None
             session["passengerSharing"] = False
             session["etaSeconds"] = None
+            session["messages"] = []
 
     def create(self, payload: dict) -> dict:
         contact = valid_text(payload.get("contactName"), "contactName", 80)
@@ -92,6 +93,7 @@ class SessionStore:
                 "passengerLocation": None,
                 "passengerSharing": False,
                 "etaSeconds": None,
+                "messages": [],
             }
             self._sessions[session_id] = session
             return {
@@ -129,6 +131,7 @@ class SessionStore:
                 "passengerLocation": dict(session["passengerLocation"]) if role == "driver" and visible and session["passengerLocation"] else None,
                 "passengerLocationSharing": session["passengerSharing"] if visible else False,
                 "etaSeconds": session["etaSeconds"] if visible else None,
+                "messages": [dict(m) for m in session["messages"]] if visible else [],
                 "expiresAt": session["expiresAt"],
             }
 
@@ -203,6 +206,14 @@ class SessionStore:
                 if role == "driver":
                     session["etaSeconds"] = eta_update
 
+            elif action == "message":
+                if session["status"] not in ("pickup_pending", "active"):
+                    raise RuntimeError("The passenger must accept the pickup first.")
+                text = valid_text(payload.get("text"), "text", 160)
+                session["messages"].append({"id": secrets.token_urlsafe(9), "sender": role,
+                                            "text": text, "createdAt": timestamp(time.time())})
+                session["messages"] = session["messages"][-50:]
+
             elif action == "finish":
                 if role != "driver":
                     raise PermissionError("Only the driver can finish the pickup.")
@@ -211,6 +222,7 @@ class SessionStore:
                 session["passengerLocation"] = None
                 session["passengerSharing"] = False
                 session["etaSeconds"] = None
+                session["messages"] = []
             else:
                 raise ValueError("Unknown action.")
 

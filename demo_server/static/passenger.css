@@ -80,6 +80,8 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .field-label { display: block; margin: 0 20px 7px; color: #243c60; font-size: 14px; font-weight: 750; }
 #place-label { display: block; width: calc(100% - 40px); margin: 0 20px; padding: 13px 14px; border: 1px solid #cbd8e6; border-radius: 11px; background: #fff; color: #122c56; font-size: 15px; }
 #place-label::placeholder { color: #91a0b3; }
+#message-input { display: block; width: calc(100% - 40px); margin: 0 20px 12px; padding: 13px 14px; border: 1px solid #cbd8e6; border-radius: 11px; color: #122c56; }
+.message-list, #message-feedback { margin: 0 20px 14px; white-space: pre-wrap; color: #4f647e; line-height: 1.5; overflow-wrap: anywhere; }
 .consent { display: flex; align-items: flex-start; gap: 11px; margin: 17px 20px 18px; padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; cursor: pointer; }
 .consent input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: #00b7a5; }
 .consent span { display: grid; gap: 4px; }

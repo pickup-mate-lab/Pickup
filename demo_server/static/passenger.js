@@ -122,7 +122,7 @@
 
   const statusText = {
     invited: "운전자의 초대를 받았습니다. 승차 지점을 지정해 주세요.",
-    pickup_pending: "승차 지점을 보냈습니다. 운전자의 확인을 기다리는 중입니다.",
+    pickup_pending: "승차 지점을 보냈습니다. 차량 경로를 준비하는 중입니다.",
     active: "승차 지점이 확정됐습니다. 차량 위치를 확인할 수 있습니다.",
     finished: "픽업이 완료되어 위치 공유가 종료됐습니다.",
     expired: "초대 유효 시간이 지나 위치 공유가 종료됐습니다."
@@ -130,6 +130,10 @@
 
   function showState(state) {
     lastState = state;
+    const canMessage = ["pickup_pending", "active"].includes(state.status);
+    $("message-card").hidden = !canMessage;
+    $("message-list").textContent = (state.messages || []).slice(-10).map(item =>
+      `${item.sender === "driver" ? "운전자" : "나"}: ${item.text}`).join("\n") || "아직 메시지가 없습니다.";
     $("contact-name").textContent = `${state.contactName}님 픽업`;
     $("pickup-time").textContent = state.pickupTime || "";
     $("session-status").textContent = statusText[state.status] || state.status;
@@ -244,6 +248,17 @@
     }
   });
 
+  $("send-message").addEventListener("click", async () => {
+    const input = $("message-input"), text = input.value.trim();
+    if (!text) { $("message-feedback").textContent = "메시지를 입력해 주세요."; return; }
+    $("send-message").disabled = true;
+    try {
+      showState(await request("/message", { text }));
+      input.value = "";
+      $("message-feedback").textContent = "메시지를 보냈습니다.";
+    } catch (error) { $("message-feedback").textContent = error.message; }
+    finally { $("send-message").disabled = false; }
+  });
   renderMap();
   poll();
   setInterval(poll, 3000);

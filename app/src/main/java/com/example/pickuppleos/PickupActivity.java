@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.ApplicationInfo;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -45,22 +46,27 @@ public final class PickupActivity extends Activity {
     private static final int CONTACTS = 10, LOCATION = 11, PICK_CONTACT = 12;
     private static final String START = "START_PICKUP";
     private static final String CHOOSE = "CHOOSE_PICKUP_CONTACT";
-    private static final String ROUTE = "CONFIRM_PICKUP_ROUTE";
+    private static final String STATUS = "GET_PICKUP_STATUS";
+    private static final String REPLY = "START_VOICE_REPLY";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ArrayList<ContactResolver.Choice> choices = new ArrayList<>();
-    private String id, driverToken, passengerToken, base, inviteBase;
+    private String id, driverToken, passengerToken, base;
     private String pendingName, pendingTime;
     private boolean pendingVoice;
     private ContactResolver.Choice selectedContact;
     private JSONObject pickup;
-    private boolean polling, fetching, starting, routeRequested;
+    private boolean polling, fetching, starting;
     private AlertDialog choiceDialog;
-    private PleosNavigation navigation;
-    private EditText serverField, inviteField, nameField, timeField;
+    private EditText serverField, nameField, timeField;
     private TextView message, session, pickupLabel, passengerLabel, etaLabel, inviteLabel;
-    private Button startButton, shareButton, confirmButton, finishButton, refreshButton;
+    private TextView messageHistory;
+    private LinearLayout messagePanel;
+    private Button startButton, finishButton, refreshButton;
     private LinearLayout setupCard, actionCard, settingsCard;
+    private VoiceReply voiceReply;
+    private String voiceReplySessionId;
+    private boolean pendingVoiceReply;
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -74,27 +80,10 @@ public final class PickupActivity extends Activity {
         super.onCreate(state);
         SharedPreferences saved = getPreferences(MODE_PRIVATE);
         base = saved.getString("base", "http://10.0.2.2:8787");
-        inviteBase = saved.getString("inviteBase", "http://127.0.0.1:8787");
         id = saved.getString("id", null);
         driverToken = saved.getString("driverToken", null);
         passengerToken = saved.getString("passengerToken", null);
         createScreen();
-        navigation = new PleosNavigation(this, new PleosNavigation.Listener() {
-            @Override public void onStatus(String text) { show(text); }
-            @Override public void onEtaSeconds(Integer seconds) {
-                if (seconds == null) return;
-                etaLabel.setText("예상 도착시간: 약 " + Math.max(1, (seconds + 59) / 60) + "분");
-                if (id != null) {
-                    Intent update = new Intent(PickupActivity.this, DriverLocationService.class);
-                    update.setAction(DriverLocationService.ACTION_ETA);
-                    update.putExtra(DriverLocationService.EXTRA_ETA, seconds);
-                    try { startService(update); }
-                    catch (IllegalStateException | SecurityException ignored) {
-                        // Location updates continue even if Android blocks a background ETA update.
-                    }
-                }
-            }
-        });
         renderButtons();
         handleGleo(getIntent());
         if (id != null) shareDriverLocation();
@@ -109,17 +98,19 @@ public final class PickupActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (!polling) { polling = true; main.post(poll); }
+        if (pendingVoiceReply && pickup != null) { pendingVoiceReply = false; main.postDelayed(this::startVoiceReply, 600); }
     }
 
     @Override protected void onPause() {
         polling = false;
         main.removeCallbacks(poll);
+        if (voiceReply != null) voiceReply.cancel();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         if (choiceDialog != null) choiceDialog.dismiss();
-        if (navigation != null) navigation.close();
+        if (voiceReply != null) voiceReply.close();
         worker.shutdownNow();
         super.onDestroy();
     }
@@ -221,7 +212,7 @@ public final class PickupActivity extends Activity {
         title.setTextColor(Color.WHITE);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         add(header, title, 0);
-        TextView subtitle = text("연락처로 연결하고, 탑승자가 정한 승차 지점으로 이동합니다.", 20);
+        TextView subtitle = text("연락처로 픽업을 준비하고 승차 지점까지 안내합니다.", 20);
         subtitle.setTextColor(0xFFE2EAF5);
         add(header, subtitle, 3);
         root.addView(header);
@@ -272,11 +263,10 @@ public final class PickupActivity extends Activity {
         right.setOrientation(LinearLayout.VERTICAL);
         setupCard = card();
         add(setupCard, eyebrow("새 픽업 시작"), 0);
-        TextView setupHint = text("탑승자를 선택하면 승차 지점 요청 링크가 만들어집니다.", 20);
+        TextView setupHint = text("탑승자를 선택해 픽업을 준비하세요.", 20);
         setupHint.setTextColor(MUTED);
         add(setupCard, setupHint, 12);
         serverField = field("차량 앱 서버 주소", base);
-        inviteField = field("탑승자 링크 주소", inviteBase);
         nameField = field("탑승자 이름", "");
         timeField = field("픽업 시각 (선택)", "");
         add(setupCard, nameField, 22);
@@ -299,14 +289,19 @@ public final class PickupActivity extends Activity {
         inviteLabel.setEllipsize(TextUtils.TruncateAt.END);
         inviteLabel.setTextIsSelectable(true);
         add(actionCard, inviteLabel, 14);
-        shareButton = button("초대 링크 공유", this::shareInvite);
-        confirmButton = button("승차 지점 확인 · 경로 안내", () -> confirm(null));
         finishButton = button("픽업 완료 · 위치 공유 종료", this::finishPickup);
-        primary(confirmButton);
         finishButton.setTextColor(0xFFB84B3E);
-        add(actionCard, confirmButton, 18);
-        add(actionCard, shareButton, 12);
-        add(actionCard, finishButton, 12);
+        add(actionCard, finishButton, 18);
+        messagePanel = new LinearLayout(this);
+        messagePanel.setOrientation(LinearLayout.VERTICAL);
+        add(messagePanel, eyebrow("간단한 메시지"), 0);
+        messageHistory = text("아직 주고받은 메시지가 없습니다.", 19);
+        messageHistory.setTextColor(MUTED);
+        add(messagePanel, messageHistory, 10);
+        add(messagePanel, button("지금 가고 있어요", () -> sendMessage("지금 가고 있어요.")), 12);
+        add(messagePanel, button("잠시 기다려 주세요", () -> sendMessage("잠시 기다려 주세요.")), 10);
+        add(messagePanel, button("음성으로 답장", this::startVoiceReply), 10);
+        add(actionCard, messagePanel, 24);
 
         if (wide) {
             columns.addView(statusCard, new LinearLayout.LayoutParams(0,
@@ -330,37 +325,38 @@ public final class PickupActivity extends Activity {
         add(body, settingsToggle, 22);
         settingsCard = card();
         add(settingsCard, eyebrow("데모 서버 주소"), 0);
-        TextView serverHint = text("실제 휴대전화에서는 접근 가능한 HTTPS 주소를 입력하세요.", 18);
+        TextView serverHint = text("차량 앱이 연결할 시연 서버 주소입니다.", 18);
         serverHint.setTextColor(MUTED);
         add(settingsCard, serverHint, 8);
         add(settingsCard, serverField, 18);
-        add(settingsCard, inviteField, 12);
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            TextView demoHint = text("아래 버튼은 실제 탑승자에게 전송하지 않는 시연용 기능입니다.", 18);
+            demoHint.setTextColor(MUTED);
+            add(settingsCard, demoHint, 18);
+            add(settingsCard, button("시연: 탑승자 승인", () -> demoPickup(37.4979, 127.0276, "강남역 인근")), 12);
+            add(settingsCard, button("시연: 승차 지점 변경", () -> demoPickup(37.5000, 127.0300, "변경된 승차 지점")), 10);
+            add(settingsCard, button("시연: 탑승자 메시지", this::demoMessage), 10);
+        }
         add(body, settingsCard, 10);
         settingsCard.setVisibility(View.GONE);
     }
 
     private void show(String value) { message.setText(value); }
 
-    private String inviteUrl() {
-        return id == null ? "" : inviteBase + "/p/" + id + "/" + passengerToken;
-    }
-
     private void renderButtons() {
         setupCard.setVisibility(id == null ? View.VISIBLE : View.GONE);
         actionCard.setVisibility(id == null ? View.GONE : View.VISIBLE);
         startButton.setEnabled(id == null && !starting);
-        shareButton.setEnabled(id != null);
         finishButton.setEnabled(id != null);
         refreshButton.setVisibility(id == null ? View.GONE : View.VISIBLE);
-        confirmButton.setEnabled(id != null && pickup != null && !pickup.optBoolean("confirmed"));
-        confirmButton.setVisibility(confirmButton.isEnabled() ? View.VISIBLE : View.GONE);
-        inviteLabel.setText(inviteUrl());
+        messagePanel.setVisibility(id != null && pickup != null ? View.VISIBLE : View.GONE);
+        inviteLabel.setText(id == null ? "" : "탑승자 앱 연결 기능은 준비 중입니다.");
     }
 
     private void handleGleo(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
-        if (!START.equals(action) && !CHOOSE.equals(action) && !ROUTE.equals(action)) return;
+        if (!START.equals(action) && !CHOOSE.equals(action) && !STATUS.equals(action) && !REPLY.equals(action)) return;
         try {
             JSONObject args = GleoResponder.parameters(intent);
             if (START.equals(action)) {
@@ -376,14 +372,45 @@ public final class PickupActivity extends Activity {
                 } else {
                     chooseContact(index, pendingTime, action);
                 }
-            } else if (pickup == null || pickup.optBoolean("confirmed")) {
-                GleoResponder.send(this, action, "fail", "There is no new pickup point to confirm.", null);
+            } else if (REPLY.equals(action)) {
+                if (id == null) {
+                    GleoResponder.send(this, action, "fail", "There is no approved pickup available for a reply.", null);
+                } else {
+                    // Gleo should not speak over our own prompt.
+                    GleoResponder.sendSilent(this, action, "success", "Starting voice reply.");
+                    pendingVoiceReply = true;
+                    if (hasWindowFocus() && pickup != null) { pendingVoiceReply = false; main.postDelayed(this::startVoiceReply, 600); }
+                    else refresh();
+                }
             } else {
-                confirm(action);
+                voiceStatus();
             }
         } catch (Exception error) {
             GleoResponder.send(this, action, "fail", "I could not read the pickup request.", null);
         }
+    }
+
+    private void voiceStatus() {
+        if (id == null) {
+            GleoResponder.send(this, STATUS, "success", "There is no active pickup.", null);
+            return;
+        }
+        String currentId = id, currentToken = driverToken, currentBase = base;
+        worker.execute(() -> {
+            try {
+                JSONObject state = new PickupApi(currentBase).state(currentId, currentToken);
+                JSONObject point = state.optJSONObject("pickup");
+                JSONArray data = new JSONArray();
+                data.put(new JSONObject().put("contactName", state.optString("contactName"))
+                        .put("status", state.optString("status"))
+                        .put("pickupLocation", point == null ? "" : point.optString("label")));
+                runOnUiThread(() -> GleoResponder.send(this, STATUS, "success",
+                        "Here is the current pickup status.", data));
+            } catch (Exception error) {
+                runOnUiThread(() -> GleoResponder.send(this, STATUS, "fail",
+                        "I could not retrieve the pickup status.", null));
+            }
+        });
     }
 
     private void resolveName(String name, String time, boolean voice) {
@@ -469,7 +496,7 @@ public final class PickupActivity extends Activity {
                 runOnUiThread(() -> {
                     success.accept(result);
                     if (voiceAction != null) GleoResponder.send(this, voiceAction, "success",
-                            "The pickup request is ready.", null);
+                            "The pickup is prepared. Passenger app connection is not available yet.", null);
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
@@ -485,17 +512,10 @@ public final class PickupActivity extends Activity {
 
     private void startSession(String name, String time, String voiceAction) {
         base = serverField.getText().toString().trim().replaceAll("/+$", "");
-        inviteBase = inviteField.getText().toString().trim().replaceAll("/+$", "");
         if (!base.startsWith("http://") && !base.startsWith("https://")) {
             show("서버 주소는 http:// 또는 https://로 시작해야 합니다.");
             if (voiceAction != null) GleoResponder.send(this, voiceAction, "fail",
                     "The server address is invalid.", null);
-            return;
-        }
-        if (!inviteBase.startsWith("http://") && !inviteBase.startsWith("https://")) {
-            show("탑승자 링크 주소는 http:// 또는 https://로 시작해야 합니다.");
-            if (voiceAction != null) GleoResponder.send(this, voiceAction, "fail",
-                    "The passenger link address is invalid.", null);
             return;
         }
         starting = true;
@@ -506,33 +526,14 @@ public final class PickupActivity extends Activity {
             driverToken = result.optString("driverToken", null);
             passengerToken = result.optString("passengerToken", null);
             getPreferences(MODE_PRIVATE).edit().putString("base", base)
-                    .putString("inviteBase", inviteBase).putString("id", id)
+                    .putString("id", id)
                     .putString("driverToken", driverToken).putString("passengerToken", passengerToken).apply();
             session.setText(name + "님 픽업 · 탑승자 응답 대기");
-            show("초대 링크를 탑승자에게 보내 주세요.");
+            show("픽업을 준비했습니다. 탑승자 앱 연결은 개발 예정입니다.");
             renderButtons();
             shareDriverLocation();
             refresh();
         }, voiceAction);
-    }
-
-    private void shareInvite() {
-        if (id == null) return;
-        String message = "픽업 위치를 지정해 주세요: " + inviteUrl();
-        if (selectedContact != null && selectedContact.phone != null
-                && !selectedContact.phone.isEmpty()) {
-            Intent sms = new Intent(Intent.ACTION_SENDTO,
-                    Uri.fromParts("smsto", selectedContact.phone, null));
-            sms.putExtra("sms_body", message);
-            if (sms.resolveActivity(getPackageManager()) != null) {
-                startActivity(sms);
-                return;
-            }
-        }
-        Intent share = new Intent(Intent.ACTION_SEND);
-        share.setType("text/plain");
-        share.putExtra(Intent.EXTRA_TEXT, message);
-        startActivity(Intent.createChooser(share, "픽업 초대 보내기"));
     }
 
     private void shareDriverLocation() {
@@ -584,17 +585,13 @@ public final class PickupActivity extends Activity {
         }
         session.setText(state.optString("contactName") + "님 픽업 · "
                 + ("invited".equals(status) ? "탑승자 응답 대기"
-                : "pickup_pending".equals(status) ? "승차 지점 확인 필요" : "픽업 진행 중"));
+                : "pickup_pending".equals(status) ? "승차 지점 경로 연결 중" : "픽업 진행 중"));
         pickup = state.optJSONObject("pickup");
-        if (pickup != null && !pickup.optBoolean("confirmed") && routeRequested) {
-            navigation.stopRoute();
-            routeRequested = false;
-            show("승차 지점이 변경돼 이전 경로를 중단했습니다.");
-        }
+        if (pendingVoiceReply && hasWindowFocus() && pickup != null) { pendingVoiceReply = false; main.postDelayed(this::startVoiceReply, 600); }
         if (pickup == null) pickupLabel.setText("승차 지점: 탑승자 지정 대기");
         else pickupLabel.setText("승차 지점: " + pickup.optString("label") + "\n"
                 + String.format(Locale.KOREA, "%.5f, %.5f", pickup.optDouble("lat"), pickup.optDouble("lon"))
-                + (pickup.optBoolean("confirmed") ? " · 확인됨" : " · 운전자 확인 대기"));
+                + (pickup.optBoolean("confirmed") ? " · 수신됨" : " · 경로 요청 준비 중"));
         JSONObject passenger = state.optJSONObject("passengerLocation");
         if (passenger == null) passengerLabel.setText("탑승자 현재 위치: 공유되지 않음");
         else if (pickup != null) {
@@ -605,25 +602,76 @@ public final class PickupActivity extends Activity {
                     + Math.round(meters[0]) + "m");
         }
         int eta = state.optInt("etaSeconds", -1);
+        JSONArray messages = state.optJSONArray("messages");
+        if (messages == null || messages.length() == 0) {
+            messageHistory.setText("아직 주고받은 메시지가 없습니다.");
+        } else {
+            StringBuilder history = new StringBuilder();
+            for (int i = Math.max(0, messages.length() - 3); i < messages.length(); i++) {
+                JSONObject item = messages.optJSONObject(i);
+                if (item == null) continue;
+                if (history.length() > 0) history.append('\n');
+                history.append("passenger".equals(item.optString("sender")) ? "탑승자: " : "나: ")
+                        .append(item.optString("text"));
+            }
+            messageHistory.setText(history.toString());
+        }
         if (eta >= 0) etaLabel.setText("예상 도착시간: 약 " + Math.max(1, (eta + 59) / 60) + "분");
         else etaLabel.setText("예상 도착시간: 아직 제공되지 않음");
-        if (pickup != null && pickup.optBoolean("confirmed")) navigation.refreshEta();
         renderButtons();
     }
 
-    private void confirm(String voiceAction) {
-        if (id == null || pickup == null || pickup.optBoolean("confirmed")) return;
-        int revision = pickup.optInt("revision", -1);
-        double lat = pickup.optDouble("lat"), lon = pickup.optDouble("lon");
-        String label = pickup.optString("label", "승차 지점");
-        String currentBase = base, currentId = id, currentToken = driverToken;
-        api("승차 지점을 확인하는 중입니다.",
-                () -> new PickupApi(currentBase).confirm(currentId, currentToken, revision),
-                result -> {
-                    renderState(result);
-                    routeRequested = true;
-                    navigation.routeTo(lat, lon, label);
-                }, voiceAction);
+    private void sendMessage(String text) {
+        if (id == null || pickup == null) return;
+        String currentId = id, currentToken = driverToken, currentBase = base;
+        api("메시지를 보내는 중입니다.",
+                () -> new PickupApi(currentBase).message(currentId, currentToken, text),
+                result -> { renderState(result); show("메시지를 보냈습니다."); }, null);
+    }
+
+    private void startVoiceReply() {
+        if (id == null || pickup == null) { show("먼저 탑승자가 요청을 승인해야 합니다."); return; }
+        voiceReplySessionId = id;
+        try {
+            if (voiceReply == null) voiceReply = new VoiceReply(this, new VoiceReply.Host() {
+                @Override public void status(String text) { show(text); }
+                @Override public void send(String text) {
+                    if (id == null || !id.equals(voiceReplySessionId) || pickup == null) {
+                        voiceReply.announce("픽업이 변경되어 메시지를 보내지 않았습니다."); return;
+                    }
+                    String currentId = id, currentToken = driverToken, currentBase = base;
+                    worker.execute(() -> {
+                        try {
+                            JSONObject result = new PickupApi(currentBase).message(currentId, currentToken, text);
+                            runOnUiThread(() -> {
+                                if (currentId.equals(id)) { renderState(result); voiceReply.announce("메시지를 보냈습니다."); }
+                            });
+                        } catch (Exception error) {
+                            runOnUiThread(() -> voiceReply.announce("메시지를 보내지 못했습니다. 다시 시도해 주세요."));
+                        }
+                    });
+                }
+            });
+            voiceReply.start();
+        } catch (RuntimeException | LinkageError error) { show("음성 인식을 사용할 수 없습니다."); }
+    }
+
+    private void demoPickup(double lat, double lon, String label) {
+        if (id == null || passengerToken == null) { show("먼저 픽업을 시작해 주세요."); return; }
+        String currentId = id, currentToken = passengerToken, currentBase = base;
+        api("시연 위치를 전달하는 중입니다.",
+                () -> new PickupApi(currentBase).passengerPickup(currentId, currentToken, lat, lon, label),
+                result -> { show("시연 위치를 전달했습니다. 자동 경로 요청을 확인하세요."); refresh(); }, null);
+    }
+
+    private void demoMessage() {
+        if (id == null || passengerToken == null || pickup == null) {
+            show("먼저 시연 승차 지점을 설정해 주세요."); return;
+        }
+        String currentId = id, currentToken = passengerToken, currentBase = base;
+        api("시연 메시지를 보내는 중입니다.",
+                () -> new PickupApi(currentBase).message(currentId, currentToken, "입구에서 기다리고 있어요."),
+                result -> { show("시연 메시지를 전달했습니다."); refresh(); }, null);
     }
 
     private void finishPickup() {
@@ -640,9 +688,8 @@ public final class PickupActivity extends Activity {
     }
 
     private void clearSession(String reason) {
+        if (voiceReply != null) voiceReply.cancel();
         stopService(new Intent(this, DriverLocationService.class));
-        if (navigation != null && routeRequested) navigation.stopRoute();
-        routeRequested = false;
         getPreferences(MODE_PRIVATE).edit().remove("id").remove("driverToken")
                 .remove("passengerToken").apply();
         id = null; driverToken = null; passengerToken = null; pickup = null;

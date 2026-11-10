@@ -92,6 +92,22 @@ class PickupApiTests(unittest.TestCase):
         self.assertIsNone(finished["passengerLocation"])
         self.assertEqual(self.api("POST", path + "/location", {"lat": 37.5, "lon": 127.0}, driver)[0], 409)
 
+    def test_messages_require_authorization_and_are_removed_on_completion(self):
+        created = self.create()
+        path = f'/api/sessions/{created["id"]}'
+        driver, passenger = created['driverToken'], created['passengerToken']
+        self.assertEqual(self.api('POST', path + '/message', {'text': 'hello'}, driver)[0], 409)
+        self.api('POST', path + '/pickup', {'lat': 37.5, 'lon': 127.0, 'label': 'Station'}, passenger)
+        self.assertEqual(self.api('POST', path + '/message', {'text': 'hello'}, 'wrong')[0], 403)
+        self.assertEqual(self.api('POST', path + '/message', {'text': ' '}, driver)[0], 400)
+        self.assertEqual(self.api('POST', path + '/message', {'text': '기다려 주세요'}, driver)[0], 200)
+        self.assertEqual(self.api('POST', path + '/message', {'text': '네'}, passenger)[0], 200)
+        messages = self.api('GET', path, token=driver)[1]['messages']
+        self.assertEqual([(m['sender'], m['text']) for m in messages],
+                         [('driver', '기다려 주세요'), ('passenger', '네')])
+        self.assertEqual(self.api('POST', path + '/finish', {}, driver)[1]['messages'], [])
+        self.assertEqual(self.api('POST', path + '/message', {'text': 'hello'}, driver)[0], 409)
+
     def test_input_validation_and_expiry(self):
         self.assertEqual(self.api("POST", "/api/sessions", {"contactName": " "})[0], 400)
         created = self.create()

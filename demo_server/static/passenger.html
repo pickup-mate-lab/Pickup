@@ -73,6 +73,14 @@
       <button type="button" id="submit-pickup" class="primary" disabled>승차 지점 보내기 <span aria-hidden="true">→</span></button>
       <p id="feedback" role="status"></p>
     </section>
+    <section class="form-card" id="message-card" hidden>
+      <div class="section-heading"><div><span class="section-kicker">운전자와 연락</span><h2>간단한 메시지</h2></div></div>
+      <p id="message-list" class="message-list" aria-live="polite">아직 메시지가 없습니다.</p>
+      <label class="field-label" for="message-input">메시지</label>
+      <input id="message-input" maxlength="160" placeholder="예: 입구에서 기다릴게요">
+      <button type="button" id="send-message" class="primary">메시지 보내기</button>
+      <p id="message-feedback" role="status"></p>
+    </section>
   </main>
 </body>
 </html>

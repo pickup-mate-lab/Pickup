@@ -83,8 +83,14 @@ final class PleosNavigation {
     }
 
     void routeTo(double latitude, double longitude, String label) {
-        RouteInfo route = new RouteInfo(latitude, longitude, null, null, label,
-                "", label, "0", RouteOption.RECOMMENDED, null, false);
+        RouteInfo route;
+        try {
+            route = new RouteInfo(latitude, longitude, null, null, label,
+                    "", label, "0", RouteOption.RECOMMENDED, "", false);
+        } catch (RuntimeException error) {
+            listener.onStatus("경로 정보를 만들지 못했습니다: " + error.getMessage());
+            return;
+        }
         if (!connected || helper == null) {
             queuedRoute = route;
             listener.onStatus("내비게이션 연결을 기다리는 중입니다.");

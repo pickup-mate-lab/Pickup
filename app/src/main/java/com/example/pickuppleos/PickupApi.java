@@ -38,6 +38,11 @@ final class PickupApi {
                 new JSONObject().put("revision", revision));
     }
 
+    JSONObject passengerPickup(String id, String token, double lat, double lon, String label) throws Exception {
+        return request("POST", "/api/sessions/" + id + "/pickup", token,
+                new JSONObject().put("lat", lat).put("lon", lon).put("label", label));
+    }
+
     JSONObject location(String id, String token, double latitude, double longitude,
                         Integer etaSeconds) throws Exception {
         JSONObject body = new JSONObject().put("lat", latitude).put("lon", longitude);
@@ -47,6 +52,11 @@ final class PickupApi {
 
     JSONObject finish(String id, String token) throws Exception {
         return request("POST", "/api/sessions/" + id + "/finish", token, new JSONObject());
+    }
+
+    JSONObject message(String id, String token, String text) throws Exception {
+        return request("POST", "/api/sessions/" + id + "/message", token,
+                new JSONObject().put("text", text));
     }
 
     private JSONObject request(String method, String path, String token, JSONObject body) throws Exception {
