@@ -266,6 +266,7 @@ public final class PickupActivity extends Activity {
         TextView setupHint = text("탑승자를 선택해 픽업을 준비하세요.", 20);
         setupHint.setTextColor(MUTED);
         add(setupCard, setupHint, 12);
+        add(setupCard, button("운전자 휴대전화 인증", () -> DriverFirebaseAuth.showLogin(this, this::show)), 12);
         serverField = field("차량 앱 서버 주소", base);
         nameField = field("탑승자 이름", "");
         timeField = field("픽업 시각 (선택)", "");
@@ -350,7 +351,8 @@ public final class PickupActivity extends Activity {
         finishButton.setEnabled(id != null);
         refreshButton.setVisibility(id == null ? View.GONE : View.VISIBLE);
         messagePanel.setVisibility(id != null && pickup != null ? View.VISIBLE : View.GONE);
-        inviteLabel.setText(id == null ? "" : "탑승자 앱 연결 기능은 준비 중입니다.");
+        inviteLabel.setText(id == null ? "" : DriverFirebaseAuth.ACCOUNT_TOKEN.equals(driverToken)
+                ? "탑승자의 요청 확인을 기다리고 있습니다." : "로컬 데모 픽업입니다.");
     }
 
     private void handleGleo(Intent intent) {
@@ -398,7 +400,7 @@ public final class PickupActivity extends Activity {
         String currentId = id, currentToken = driverToken, currentBase = base;
         worker.execute(() -> {
             try {
-                JSONObject state = new PickupApi(currentBase).state(currentId, currentToken);
+                JSONObject state = new PickupApi(PickupActivity.this, currentBase).state(currentId, currentToken);
                 JSONObject point = state.optJSONObject("pickup");
                 JSONArray data = new JSONArray();
                 data.put(new JSONObject().put("contactName", state.optString("contactName"))
@@ -436,6 +438,7 @@ public final class PickupActivity extends Activity {
             startSession(name, time, voice ? START : null);
             return;
         }
+        selectedContact = null;
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, CONTACTS);
             if (voice) GleoResponder.send(this, START, "asking",
@@ -496,7 +499,7 @@ public final class PickupActivity extends Activity {
                 runOnUiThread(() -> {
                     success.accept(result);
                     if (voiceAction != null) GleoResponder.send(this, voiceAction, "success",
-                            "The pickup is prepared. Passenger app connection is not available yet.", null);
+                            "The pickup request was prepared. Check the passenger response.", null);
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
@@ -518,18 +521,35 @@ public final class PickupActivity extends Activity {
                     "The server address is invalid.", null);
             return;
         }
+        boolean account = DriverFirebaseAuth.signedIn(this);
+        boolean configured = DriverFirebaseAuth.configured(this) != null;
+        boolean debug = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (!account && (configured || !debug)) {
+            show(configured ? "먼저 운전자 휴대전화 인증을 완료해 주세요." : "Firebase 설정과 운전자 인증이 필요합니다.");
+            if (voiceAction != null) GleoResponder.send(this, voiceAction, "fail", "Please authenticate the driver in the app first.", null);
+            return;
+        }
+        final String passengerPhone = account && selectedContact != null
+                ? DriverFirebaseAuth.normalizePhone(selectedContact.phone) : null;
+        if (account && passengerPhone == null) {
+            show("연락처에서 올바른 탑승자 전화번호를 선택해 주세요.");
+            if (voiceAction != null) GleoResponder.send(this, voiceAction, "fail", "Please choose a contact with a valid phone number.", null);
+            return;
+        }
         starting = true;
         renderButtons();
-        api("픽업 요청을 만드는 중입니다.", () -> new PickupApi(base).create(name, time), result -> {
+        api("픽업 요청을 만드는 중입니다.", () -> account
+                ? new PickupApi(PickupActivity.this, base).createAccount(name, time, passengerPhone)
+                : new PickupApi(PickupActivity.this, base).create(name, time), result -> {
             starting = false;
             id = result.optString("id", null);
-            driverToken = result.optString("driverToken", null);
+            driverToken = account ? DriverFirebaseAuth.ACCOUNT_TOKEN : result.optString("driverToken", null);
             passengerToken = result.optString("passengerToken", null);
             getPreferences(MODE_PRIVATE).edit().putString("base", base)
                     .putString("id", id)
                     .putString("driverToken", driverToken).putString("passengerToken", passengerToken).apply();
             session.setText(name + "님 픽업 · 탑승자 응답 대기");
-            show("픽업을 준비했습니다. 탑승자 앱 연결은 개발 예정입니다.");
+            show(account ? "탑승자의 요청 확인을 기다리고 있습니다." : "데모 픽업을 준비했습니다.");
             renderButtons();
             shareDriverLocation();
             refresh();
@@ -559,7 +579,7 @@ public final class PickupActivity extends Activity {
         String currentId = id, currentToken = driverToken, currentBase = base;
         worker.execute(() -> {
             try {
-                JSONObject result = new PickupApi(currentBase).state(currentId, currentToken);
+                JSONObject result = new PickupApi(PickupActivity.this, currentBase).state(currentId, currentToken);
                 runOnUiThread(() -> {
                     fetching = false;
                     if (currentId.equals(id)) renderState(result);
@@ -625,7 +645,7 @@ public final class PickupActivity extends Activity {
         if (id == null || pickup == null) return;
         String currentId = id, currentToken = driverToken, currentBase = base;
         api("메시지를 보내는 중입니다.",
-                () -> new PickupApi(currentBase).message(currentId, currentToken, text),
+                () -> new PickupApi(PickupActivity.this, currentBase).message(currentId, currentToken, text),
                 result -> { renderState(result); show("메시지를 보냈습니다."); }, null);
     }
 
@@ -642,7 +662,7 @@ public final class PickupActivity extends Activity {
                     String currentId = id, currentToken = driverToken, currentBase = base;
                     worker.execute(() -> {
                         try {
-                            JSONObject result = new PickupApi(currentBase).message(currentId, currentToken, text);
+                            JSONObject result = new PickupApi(PickupActivity.this, currentBase).message(currentId, currentToken, text);
                             runOnUiThread(() -> {
                                 if (currentId.equals(id)) { renderState(result); voiceReply.announce("메시지를 보냈습니다."); }
                             });
@@ -660,7 +680,7 @@ public final class PickupActivity extends Activity {
         if (id == null || passengerToken == null) { show("먼저 픽업을 시작해 주세요."); return; }
         String currentId = id, currentToken = passengerToken, currentBase = base;
         api("시연 위치를 전달하는 중입니다.",
-                () -> new PickupApi(currentBase).passengerPickup(currentId, currentToken, lat, lon, label),
+                () -> new PickupApi(PickupActivity.this, currentBase).passengerPickup(currentId, currentToken, lat, lon, label),
                 result -> { show("시연 위치를 전달했습니다. 자동 경로 요청을 확인하세요."); refresh(); }, null);
     }
 
@@ -670,7 +690,7 @@ public final class PickupActivity extends Activity {
         }
         String currentId = id, currentToken = passengerToken, currentBase = base;
         api("시연 메시지를 보내는 중입니다.",
-                () -> new PickupApi(currentBase).message(currentId, currentToken, "입구에서 기다리고 있어요."),
+                () -> new PickupApi(PickupActivity.this, currentBase).message(currentId, currentToken, "입구에서 기다리고 있어요."),
                 result -> { show("시연 메시지를 전달했습니다."); refresh(); }, null);
     }
 
@@ -682,7 +702,7 @@ public final class PickupActivity extends Activity {
                 .setPositiveButton("종료", (dialog, which) -> {
                     String currentId = id, currentToken = driverToken, currentBase = base;
                     api("픽업을 종료하는 중입니다.",
-                            () -> new PickupApi(currentBase).finish(currentId, currentToken),
+                            () -> new PickupApi(PickupActivity.this, currentBase).finish(currentId, currentToken),
                             result -> clearSession("픽업이 완료되어 위치 공유가 종료됐습니다."), null);
                 }).show();
     }

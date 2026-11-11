@@ -44,6 +44,7 @@ public final class DriverLocationService extends Service implements LocationList
     private PleosNavigation navigation;
     private PassengerMessageReader messageReader;
     private int routedRevision = -1;
+    private int pendingRevision = -1;
     private boolean checking;
     private long routeRetryAfter;
     private final HashSet<String> seenPassengerMessages = new HashSet<>();
@@ -78,6 +79,7 @@ public final class DriverLocationService extends Service implements LocationList
         String incomingId = intent.getStringExtra(EXTRA_ID);
         if (incomingId != null && !incomingId.equals(sessionId)) {
             routedRevision = -1;
+            pendingRevision = -1;
             routeRetryAfter = 0;
             seenPassengerMessages.clear();
             messagesInitialized = false;
@@ -105,14 +107,16 @@ public final class DriverLocationService extends Service implements LocationList
         }
         if (navigation == null) {
             navigation = new PleosNavigation(this, new PleosNavigation.Listener() {
-                @Override public void onStatus(String status) {
-                    updateNotification(status);
-                    if (status.contains("오류") || status.contains("실패") || status.contains("못했")) {
-                        routedRevision = -1;
-                        routeRetryAfter = System.currentTimeMillis() + 15000;
-                    }
+                @Override public void onStatus(String status) { updateNotification(status); }
+                @Override public void onEtaSeconds(Integer seconds) {
+                    etaSeconds = seconds;
+                    if (lastLocation != null) send(lastLocation, true);
                 }
-                @Override public void onEtaSeconds(Integer seconds) { }
+                @Override public void onRouteCompleted() { confirmRoutedPickup(); }
+                @Override public void onRouteFailed() {
+                    pendingRevision = -1;
+                    routeRetryAfter = System.currentTimeMillis() + 15000;
+                }
             });
         }
         main.removeCallbacks(poll);
@@ -148,13 +152,9 @@ public final class DriverLocationService extends Service implements LocationList
         final String currentId = sessionId, currentToken = token, currentBase = baseUrl;
         worker.execute(() -> {
             try {
-                PickupApi api = new PickupApi(currentBase);
+                PickupApi api = new PickupApi(DriverLocationService.this, currentBase);
                 JSONObject state = api.state(currentId, currentToken);
                 JSONObject point = state.optJSONObject("pickup");
-                if (point != null && !point.optBoolean("confirmed")) {
-                    state = api.confirm(currentId, currentToken, point.optInt("revision", -1));
-                    point = state.optJSONObject("pickup");
-                }
                 final JSONObject target = point;
                 final String status = state.optString("status");
                 JSONArray messages = state.optJSONArray("messages");
@@ -177,12 +177,12 @@ public final class DriverLocationService extends Service implements LocationList
                         stopSelf();
                         return;
                     }
-                    if (target != null && target.optBoolean("confirmed")) {
+                    if (target != null) {
                         int revision = target.optInt("revision", -1);
-                        if (revision > 0 && revision != routedRevision && navigation != null
+                        if (revision > 0 && revision != routedRevision && pendingRevision < 0 && navigation != null
                                 && System.currentTimeMillis() >= routeRetryAfter) {
                             if (routedRevision > 0) updateNotification("승차 지점이 변경되어 새 경로를 요청합니다.");
-                            routedRevision = revision;
+                            pendingRevision = revision;
                             navigation.routeTo(target.optDouble("lat"), target.optDouble("lon"),
                                     target.optString("label", "승차 지점"));
                         }
@@ -190,6 +190,33 @@ public final class DriverLocationService extends Service implements LocationList
                 });
             } catch (Exception error) {
                 main.post(() -> checking = false);
+            }
+        });
+    }
+
+    // A route request is asynchronous. Confirm only the revision whose route
+    // received a completion callback; the server rejects a changed revision.
+    private void confirmRoutedPickup() {
+        if (pendingRevision < 0 || sessionId == null) return;
+        final int revision = pendingRevision;
+        final String currentId = sessionId, currentToken = token, currentBase = baseUrl;
+        worker.execute(() -> {
+            try {
+                new PickupApi(DriverLocationService.this, currentBase)
+                        .confirm(currentId, currentToken, revision);
+                main.post(() -> {
+                    if (!currentId.equals(sessionId) || pendingRevision != revision) return;
+                    pendingRevision = -1;
+                    routedRevision = revision;
+                    updateNotification("승차 지점 경로가 확인됐습니다.");
+                });
+            } catch (Exception error) {
+                main.post(() -> {
+                    if (!currentId.equals(sessionId) || pendingRevision != revision) return;
+                    pendingRevision = -1;
+                    routeRetryAfter = System.currentTimeMillis() + 15000;
+                    updateNotification("승차 지점 확인에 실패했습니다. 다시 확인합니다.");
+                });
             }
         });
     }
@@ -218,7 +245,7 @@ public final class DriverLocationService extends Service implements LocationList
         if (sendBase == null || sendId == null || sendToken == null) return;
         worker.execute(() -> {
             try {
-                new PickupApi(sendBase).location(sendId, sendToken,
+                new PickupApi(DriverLocationService.this, sendBase).location(sendId, sendToken,
                         location.getLatitude(), location.getLongitude(), sendEta);
             } catch (Exception ignored) {
                 // A later location update retries when the local demo server returns.

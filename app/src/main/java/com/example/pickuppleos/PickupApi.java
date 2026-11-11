@@ -1,6 +1,7 @@
 package com.example.pickuppleos;
 
 import org.json.JSONObject;
+import android.content.Context;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -18,9 +19,17 @@ final class PickupApi {
     }
 
     private final String baseUrl;
+    private final Context context;
 
-    PickupApi(String baseUrl) {
+    PickupApi(Context context, String baseUrl) {
+        this.context = context.getApplicationContext();
         this.baseUrl = baseUrl.replaceAll("/+$", "");
+    }
+
+    JSONObject createAccount(String contactName, String pickupTime, String phone) throws Exception {
+        JSONObject body = new JSONObject().put("contactName", contactName).put("passengerPhone", phone);
+        if (!pickupTime.trim().isEmpty()) body.put("pickupTime", pickupTime.trim());
+        return request("POST", "/api/sessions", DriverFirebaseAuth.ACCOUNT_TOKEN, body);
     }
 
     JSONObject create(String contactName, String pickupTime) throws Exception {
@@ -60,6 +69,15 @@ final class PickupApi {
     }
 
     private JSONObject request(String method, String path, String token, JSONObject body) throws Exception {
+        if (DriverFirebaseAuth.ACCOUNT_TOKEN.equals(token)) {
+            URL endpoint = new URL(baseUrl);
+            boolean localDemo = "http".equals(endpoint.getProtocol()) && "10.0.2.2".equals(endpoint.getHost())
+                    && (context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            if (!"https".equals(endpoint.getProtocol()) && !localDemo)
+                throw new SecurityException("계정 연결에는 HTTPS가 필요합니다.");
+            path = path.replaceFirst("^/api/sessions", "/api/v1/pickups");
+            token = DriverFirebaseAuth.idToken(context);
+        }
         HttpURLConnection connection = (HttpURLConnection) new URL(baseUrl + path).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(5000);
