@@ -41,7 +41,13 @@ Android Studio에서 실행 대상 `Pleos Connect v2.1.0`을 선택하고 `app`�
 
 `app/src/main/assets/schema.json`에는 Gleo의 픽업 시작, 동명이인 선택, 음성 답장 시작 액션이 들어 있습니다. 앱은 해당 인텐트와 callback을 처리합니다. **실제 Gleo 음성 호출은 App Schema 등록·승인 후 별도로 검증해야 합니다.** 메시지 읽기와 음성 답장은 Pleos TTS·STT 온디바이스 모드로 연결되어 있습니다. 스키마의 actionCalls는 최대 3개여서 픽업 상태 음성 확인은 현재 스키마에서 빠져 있습니다. [Gleo App Schema 안내](https://document.pleos.ai/docs/pleos-only/app-integration-guide/guide/app-capability)
 
-현재 Pleos 에뮬레이터 시연에서는 NaviHelper 경로 요청을 확인했지만 ETA 수신은 확인되지 않았습니다. 공식 문서에 `remainTime`의 단위도 명시되지 않아 이 값을 임의로 분으로 환산하지 않습니다. 지금은 예상 시간 대신 차량과 승차 지점의 **직선거리**를 보여 줍니다. [NaviHelper 목적지 안내](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/NaviHelper/destinations), [remainTime API](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/NaviHelper/navi-helper/ai.pleos.playground.navi.data/destination-info/remain-time)
+ETA는 NaviHelper `DestinationInfo.remainTime`을 사용합니다. 웹 문서에는 단위가 없지만 `ai.pleos.playground:navi-data:3.0.4` 소스의 KDoc에 **초(seconds)**로 명시되어 있습니다. 차량 앱은 경로가 확인되면 15초마다 남은 시간을 조회해 위치와 함께 서버에 보냅니다. 다음 경우에는 ETA를 보내지 않습니다.
+
+- 내비 목적지가 승차 지점과 다를 때
+- 첫 값이 경로 시작 시의 `RouteStartInfo.duration`(초)과 3배 이상 차이 날 때
+- 60초 넘게 값이 갱신되지 않았을 때
+
+에뮬레이터에서는 `adb logcat -s PickupEta`로 `remainTime`, `remainDistance`, `routeDuration` 값을 확인할 수 있습니다. 서버(Go)는 이 ETA로 탑승자에게 출발 시점·도착 임박(5분)·도착(100m) 안내를 보냅니다. 설계는 [docs/superpowers/specs/2026-11-11-eta-arrival-alerts-design.md](docs/superpowers/specs/2026-11-11-eta-arrival-alerts-design.md)에 있습니다. [NaviHelper 목적지 안내](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/NaviHelper/destinations)
 
 ## 실제 휴대전화에서 시험할 때
 

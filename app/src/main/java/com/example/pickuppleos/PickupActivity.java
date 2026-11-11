@@ -597,6 +597,17 @@ public final class PickupActivity extends Activity {
         });
     }
 
+    /** " · N초 전 갱신" for a server RFC 3339 UTC timestamp, or "" if it cannot be read. */
+    static String updatedAgo(String timestamp) {
+        try {
+            long seconds = Math.max(0, (System.currentTimeMillis()
+                    - java.time.Instant.parse(timestamp).toEpochMilli()) / 1000);
+            return seconds < 60 ? " · " + seconds + "초 전 갱신" : " · " + (seconds / 60) + "분 전 갱신";
+        } catch (RuntimeException error) {
+            return "";
+        }
+    }
+
     private void renderState(JSONObject state) {
         String status = state.optString("status");
         if ("finished".equals(status) || "expired".equals(status)) {
@@ -619,7 +630,7 @@ public final class PickupActivity extends Activity {
             android.location.Location.distanceBetween(passenger.optDouble("lat"), passenger.optDouble("lon"),
                     pickup.optDouble("lat"), pickup.optDouble("lon"), meters);
             passengerLabel.setText("탑승자 현재 위치: 승차 지점에서 직선거리 약 "
-                    + Math.round(meters[0]) + "m");
+                    + Math.round(meters[0]) + "m" + updatedAgo(passenger.optString("updatedAt")));
         }
         int eta = state.optInt("etaSeconds", -1);
         JSONArray messages = state.optJSONArray("messages");
