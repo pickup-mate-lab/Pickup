@@ -3,9 +3,11 @@ package com.example.pickuppleos;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import ai.pleos.playground.navi.constants.NaviErrorCode;
 import ai.pleos.playground.navi.constants.RouteOption;
+import ai.pleos.playground.navi.data.DestinationArrivedInfo;
 import ai.pleos.playground.navi.data.DestinationInfo;
 import ai.pleos.playground.navi.data.RouteInfo;
 import ai.pleos.playground.navi.data.RouteStartInfo;
@@ -22,6 +24,8 @@ final class PleosNavigation {
         void onRouteFailed();
     }
 
+    /** Verify on an emulator with: adb logcat -s PickupEta */
+    static final String ETA_TAG = "PickupEta";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Listener listener;
     private NaviHelper helper;
@@ -45,9 +49,29 @@ final class PleosNavigation {
         listener.onRouteFailed();
     }
     private double requestedLatitude, requestedLongitude;
+    private boolean hasTarget;
+    // remainTime is documented in seconds (navi-data DestinationInfo KDoc).
+    // The first sample is compared with RouteStartInfo.duration (also seconds)
+    // so a unit mismatch on a real head unit never reaches the passenger.
+    private int routeDuration = -1;
+    private boolean etaChecked;
+    private boolean etaDisabled;
     private final NaviHelperEventListener events = new NaviHelperEventListener() {
         @Override public void onRouteStarted(RouteStartInfo info) {
-            main.post(() -> { if (!closed && waitingForRoute) routeStarted = true; });
+            main.post(() -> {
+                if (closed || !waitingForRoute) return;
+                routeStarted = true;
+                routeDuration = info != null ? info.getDuration() : -1;
+                Log.d(ETA_TAG, "routeStarted duration=" + routeDuration);
+            });
+        }
+
+        @Override public void onDestinationArrived(DestinationArrivedInfo info) {
+            main.post(() -> { if (!closed && hasTarget && !etaDisabled) listener.onEtaSeconds(0); });
+        }
+
+        @Override public void onRouteCancelled() {
+            main.post(() -> { if (!closed) listener.onEtaSeconds(null); });
         }
         // Pleos Connect v2.1 emits the older completion callback.
         @SuppressWarnings("deprecation")
@@ -69,7 +93,8 @@ final class PleosNavigation {
         @Override public void onDestinationInfo(DestinationInfo info) {
             main.post(() -> {
                 if (closed || info == null) return;
-                boolean matches = Math.abs(info.getLatitude() - requestedLatitude) <= 0.0002
+                boolean matches = hasTarget
+                        && Math.abs(info.getLatitude() - requestedLatitude) <= 0.0002
                         && Math.abs(info.getLongitude() - requestedLongitude) <= 0.0002;
                 if (waitingForRoute && checkingDestination) {
                     waitingForRoute = false;
@@ -93,12 +118,7 @@ final class PleosNavigation {
                     listener.onStatus("내비게이션 목적지가 변경됐습니다.");
                     return;
                 }
-                if (destinationVerified && matches) {
-                    // NaviHelper 3.0.5 uses navi-data 3.0.4; DestinationInfo.kt
-                    // documents remainTime in seconds. Reject invalid values.
-                    int seconds = info.getRemainTime();
-                    listener.onEtaSeconds(seconds >= 0 && seconds <= 86400 ? seconds : null);
-                }
+                if (destinationVerified && matches) reportEta(info.getRemainTime());
             });
         }
 
@@ -152,6 +172,11 @@ final class PleosNavigation {
         listener.onEtaSeconds(null);
         requestedLatitude = latitude;
         requestedLongitude = longitude;
+        hasTarget = true;
+        routeDuration = -1;
+        etaChecked = false;
+        etaDisabled = false;
+        listener.onEtaSeconds(null);
         checkingDestination = false;
         RouteInfo route;
         try {
@@ -178,6 +203,27 @@ final class PleosNavigation {
         }
     }
 
+    private void reportEta(int remainTime) {
+        if (etaDisabled) return;
+        if (remainTime < 0 || remainTime > 86400) {
+            listener.onEtaSeconds(null);
+            return;
+        }
+        if (!etaChecked) {
+            etaChecked = true;
+            if (routeDuration > 0 && (remainTime > routeDuration * 3 + 60
+                    || remainTime * 3 + 60 < routeDuration)) {
+                etaDisabled = true;
+                Log.w(ETA_TAG, "remainTime " + remainTime + " does not match route duration "
+                        + routeDuration + "; ETA disabled for this route");
+                listener.onStatus("내비게이션 남은 시간이 경로 정보와 맞지 않아 도착 예정시간 전달을 중지했습니다.");
+                listener.onEtaSeconds(null);
+                return;
+            }
+        }
+        listener.onEtaSeconds(remainTime);
+    }
+
     void refreshEta() {
         if (connected && helper != null) {
             try { helper.getDestinationInfo(); } catch (RuntimeException ignored) { }
@@ -194,6 +240,7 @@ final class PleosNavigation {
         routeStarted = false;
         checkingDestination = false;
         destinationVerified = false;
+        hasTarget = false;
         listener.onEtaSeconds(null);
     }
 

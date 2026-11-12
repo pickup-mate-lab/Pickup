@@ -37,7 +37,11 @@ public final class DriverLocationService extends Service implements LocationList
     private String baseUrl;
     private String sessionId;
     private String token;
+    private static final long ETA_REFRESH_MS = 15000;
+    private static final long ETA_STALE_MS = 60000;
     private Integer etaSeconds;
+    private long etaUpdatedAt;
+    private long etaRequestedAt;
     private Location lastLocation;
     private long lastSentAt;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -47,15 +51,15 @@ public final class DriverLocationService extends Service implements LocationList
     private int pendingRevision = -1;
     private boolean checking;
     private long routeRetryAfter;
-    private long lastEtaRefresh;
     private final HashSet<String> seenPassengerMessages = new HashSet<>();
     private boolean messagesInitialized;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (sessionId == null) return;
             checkPickup();
-            if (navigation != null && System.currentTimeMillis() - lastEtaRefresh >= 15000) {
-                lastEtaRefresh = System.currentTimeMillis();
+            long now = System.currentTimeMillis();
+            if (routedRevision > 0 && navigation != null && now - etaRequestedAt >= ETA_REFRESH_MS) {
+                etaRequestedAt = now;
                 navigation.refreshEta();
             }
             main.postDelayed(this, 3000);
@@ -76,8 +80,7 @@ public final class DriverLocationService extends Service implements LocationList
         if (intent == null) return START_NOT_STICKY;
         if (ACTION_ETA.equals(intent.getAction())) {
             int value = intent.getIntExtra(EXTRA_ETA, -1);
-            etaSeconds = value >= 0 ? value : null;
-            if (lastLocation != null) send(lastLocation, true);
+            updateEta(value >= 0 ? value : null);
             return START_NOT_STICKY;
         }
         baseUrl = intent.getStringExtra(EXTRA_BASE);
@@ -86,6 +89,7 @@ public final class DriverLocationService extends Service implements LocationList
             routedRevision = -1;
             pendingRevision = -1;
             routeRetryAfter = 0;
+            etaSeconds = null;
             seenPassengerMessages.clear();
             messagesInitialized = false;
         }
@@ -139,8 +143,7 @@ public final class DriverLocationService extends Service implements LocationList
         navigation = new PleosNavigation(this, new PleosNavigation.Listener() {
             @Override public void onStatus(String status) { updateNotification(status); }
             @Override public void onEtaSeconds(Integer seconds) {
-                etaSeconds = seconds;
-                if (lastLocation != null) send(lastLocation, true);
+                updateEta(seconds);
             }
             @Override public void onRouteCompleted() { confirmRoutedPickup(); }
             @Override public void onRouteFailed() {
@@ -266,13 +269,20 @@ public final class DriverLocationService extends Service implements LocationList
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(42, notification);
     }
 
+    private void updateEta(Integer seconds) {
+        etaSeconds = seconds;
+        etaUpdatedAt = System.currentTimeMillis();
+        if (lastLocation != null) send(lastLocation, true);
+    }
+
     private void send(Location location, boolean force) {
         lastLocation = location;
         long now = System.currentTimeMillis();
         if (!force && now - lastSentAt < 5000) return;
         lastSentAt = now;
         final String sendBase = baseUrl, sendId = sessionId, sendToken = token;
-        final Integer sendEta = etaSeconds;
+        // An ETA the navigation app stopped refreshing is cleared on the server.
+        final Integer sendEta = now - etaUpdatedAt <= ETA_STALE_MS ? etaSeconds : null;
         if (sendBase == null || sendId == null || sendToken == null) return;
         worker.execute(() -> {
             try {

@@ -63,8 +63,9 @@ final class PickupApi {
 
     JSONObject location(String id, String token, double latitude, double longitude,
                         Integer etaSeconds) throws Exception {
-        JSONObject body = new JSONObject().put("lat", latitude).put("lon", longitude);
-        body.put("etaSeconds", etaSeconds == null ? JSONObject.NULL : etaSeconds);
+        // Always send the key: an explicit null clears a previous ETA on the server.
+        JSONObject body = new JSONObject().put("lat", latitude).put("lon", longitude)
+                .put("etaSeconds", etaSeconds != null ? etaSeconds : JSONObject.NULL);
         return request("POST", "/api/sessions/" + id + "/location", token, body);
     }
 
