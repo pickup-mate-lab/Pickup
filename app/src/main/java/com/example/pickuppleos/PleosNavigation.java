@@ -31,11 +31,27 @@ final class PleosNavigation {
     private boolean waitingForRoute;
     private boolean routeStarted;
     private boolean checkingDestination;
+    private boolean destinationVerified;
+    private final Runnable routeTimeout = this::handleRouteTimeout;
+    private void handleRouteTimeout() {
+        if (closed) return;
+        queuedRoute = null;
+        waitingForRoute = false;
+        routeStarted = false;
+        checkingDestination = false;
+        destinationVerified = false;
+        listener.onEtaSeconds(null);
+        listener.onStatus("내비게이션 응답이 지연되어 다시 연결합니다.");
+        listener.onRouteFailed();
+    }
     private double requestedLatitude, requestedLongitude;
     private final NaviHelperEventListener events = new NaviHelperEventListener() {
         @Override public void onRouteStarted(RouteStartInfo info) {
             main.post(() -> { if (!closed && waitingForRoute) routeStarted = true; });
         }
+        // Pleos Connect v2.1 emits the older completion callback.
+        @SuppressWarnings("deprecation")
+        @Override public void onRouteEnded() { onRoutingCompleted(); }
         @Override public void onRoutingCompleted() {
             main.post(() -> {
                 if (closed) return;
@@ -52,28 +68,42 @@ final class PleosNavigation {
 
         @Override public void onDestinationInfo(DestinationInfo info) {
             main.post(() -> {
-                if (closed || !waitingForRoute || !checkingDestination || info == null) return;
-                // Avoid accepting a completion event for another destination.
-                if (Math.abs(info.getLatitude() - requestedLatitude) > 0.0002
-                        || Math.abs(info.getLongitude() - requestedLongitude) > 0.0002) {
+                if (closed || info == null) return;
+                boolean matches = Math.abs(info.getLatitude() - requestedLatitude) <= 0.0002
+                        && Math.abs(info.getLongitude() - requestedLongitude) <= 0.0002;
+                if (waitingForRoute && checkingDestination) {
                     waitingForRoute = false;
                     checkingDestination = false;
                     routeStarted = false;
-                    listener.onStatus("내비게이션 목적지가 승차 지점과 다릅니다.");
-                    listener.onRouteFailed();
+                    if (!matches) {
+                        destinationVerified = false;
+                        main.removeCallbacks(routeTimeout);
+                        listener.onEtaSeconds(null);
+                        listener.onStatus("내비게이션 목적지가 승차 지점과 다릅니다.");
+                        listener.onRouteFailed();
+                        return;
+                    }
+                    destinationVerified = true;
+                    main.removeCallbacks(routeTimeout);
+                    listener.onRouteCompleted();
+                }
+                if (destinationVerified && !matches) {
+                    destinationVerified = false;
+                    listener.onEtaSeconds(null);
+                    listener.onStatus("내비게이션 목적지가 변경됐습니다.");
                     return;
                 }
-                waitingForRoute = false;
-                checkingDestination = false;
-                routeStarted = false;
-                listener.onRouteCompleted();
+                if (destinationVerified && matches) {
+                    // NaviHelper 3.0.5 uses navi-data 3.0.4; DestinationInfo.kt
+                    // documents remainTime in seconds. Reject invalid values.
+                    int seconds = info.getRemainTime();
+                    listener.onEtaSeconds(seconds >= 0 && seconds <= 86400 ? seconds : null);
+                }
             });
-            // The SDK documentation does not specify remainTime's unit.
-            // Never publish an unverified ETA.
         }
 
         @Override public void onError(NaviErrorCode error) {
-            main.post(() -> { if (!closed) { waitingForRoute = false; routeStarted = false; listener.onStatus("내비게이션 오류: " + error); listener.onRouteFailed(); } });
+            main.post(() -> { if (!closed) { main.removeCallbacks(routeTimeout); waitingForRoute = false; routeStarted = false; listener.onStatus("내비게이션 오류: " + error); listener.onRouteFailed(); } });
         }
     };
 
@@ -116,6 +146,10 @@ final class PleosNavigation {
     }
 
     void routeTo(double latitude, double longitude, String label) {
+        main.removeCallbacks(routeTimeout);
+        main.postDelayed(routeTimeout, 30000);
+        destinationVerified = false;
+        listener.onEtaSeconds(null);
         requestedLatitude = latitude;
         requestedLongitude = longitude;
         checkingDestination = false;
@@ -154,15 +188,18 @@ final class PleosNavigation {
         if (connected && helper != null) {
             try { helper.cancelRoute(); } catch (RuntimeException ignored) { }
         }
+        main.removeCallbacks(routeTimeout);
         queuedRoute = null;
         waitingForRoute = false;
         routeStarted = false;
         checkingDestination = false;
+        destinationVerified = false;
         listener.onEtaSeconds(null);
     }
 
     void close() {
         closed = true;
+        main.removeCallbacks(routeTimeout);
         if (helper != null) {
             try { if (connected) helper.removeListener(events); }
             catch (RuntimeException ignored) { }

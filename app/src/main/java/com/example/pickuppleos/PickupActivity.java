@@ -37,12 +37,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class PickupActivity extends Activity {
-    private static final int NAVY = Color.rgb(11, 45, 107);
-    private static final int INK = Color.rgb(18, 39, 72);
-    private static final int MINT = Color.rgb(0, 199, 178);
-    private static final int MUTED = Color.rgb(91, 108, 133);
-    private static final int BORDER = Color.rgb(215, 225, 237);
-    private static final int SURFACE = Color.rgb(244, 247, 251);
+    private static final int NAVY = Color.rgb(36, 59, 52);
+    private static final int INK = Color.rgb(37, 59, 52);
+    private static final int MINT = Color.rgb(200, 77, 54);
+    private static final int MUTED = Color.rgb(112, 119, 105);
+    private static final int BORDER = Color.rgb(228, 223, 211);
+    private static final int SURFACE = Color.rgb(247, 245, 239);
     private static final int CONTACTS = 10, LOCATION = 11, PICK_CONTACT = 12;
     private static final String START = "START_PICKUP";
     private static final String CHOOSE = "CHOOSE_PICKUP_CONTACT";
@@ -180,7 +180,7 @@ public final class PickupActivity extends Activity {
         view.setTextColor(NAVY);
         view.setMinHeight(dp(72));
         view.setPadding(dp(18), dp(12), dp(18), dp(12));
-        view.setBackground(new RippleDrawable(ColorStateList.valueOf(0x2200C7B2),
+        view.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22C84D36),
                 shape(Color.WHITE, 14, BORDER), null));
         view.setOnClickListener(v -> action.run());
         return view;
@@ -189,7 +189,7 @@ public final class PickupActivity extends Activity {
     private void primary(Button view) {
         view.setTextColor(Color.WHITE);
         view.setBackground(new RippleDrawable(ColorStateList.valueOf(0x44FFFFFF),
-                shape(NAVY, 14, Color.TRANSPARENT), null));
+                shape(MINT, 14, Color.TRANSPARENT), null));
     }
 
     private void createScreen() {
@@ -206,14 +206,14 @@ public final class PickupActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setBackgroundColor(NAVY);
+        header.setBackgroundColor(SURFACE);
         header.setPadding(dp(38), dp(18), dp(38), dp(22));
-        TextView title = text("●  픽업메이트", 35);
-        title.setTextColor(Color.WHITE);
+        TextView title = text("픽업메이트", 32);
+        title.setTextColor(NAVY);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         add(header, title, 0);
-        TextView subtitle = text("연락처로 픽업을 준비하고 승차 지점까지 안내합니다.", 20);
-        subtitle.setTextColor(0xFFE2EAF5);
+        TextView subtitle = text("DRIVER  ·  안전하게 만나는 가장 쉬운 방법", 18);
+        subtitle.setTextColor(MUTED);
         add(header, subtitle, 3);
         root.addView(header);
 
@@ -232,29 +232,35 @@ public final class PickupActivity extends Activity {
         add(body, columns, 0);
 
         LinearLayout statusCard = card();
-        add(statusCard, eyebrow("현재 픽업"), 0);
-        session = text("진행 중인 픽업 없음", 32);
+        statusCard.setBackground(shape(NAVY, 22, Color.TRANSPARENT));
+        TextView statusHeading = eyebrow("현재 픽업  /  PICKUP STATUS");
+        statusHeading.setTextColor(0xFFC9D8C9);
+        add(statusCard, statusHeading, 0);
+        session = text("진행 중인 픽업 없음", 34);
         session.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        session.setTextColor(Color.WHITE);
         add(statusCard, session, 14);
         message = text("탑승자를 선택하거나 이름을 입력해 픽업을 시작하세요.", 20);
         message.setTextColor(NAVY);
         message.setPadding(dp(18), dp(14), dp(18), dp(14));
-        message.setBackground(shape(0xFFE4F8F5, 12, Color.TRANSPARENT));
+        message.setBackground(shape(0xFFF6E8DC, 12, Color.TRANSPARENT));
         add(statusCard, message, 18);
         View divider = new View(this);
-        divider.setBackgroundColor(BORDER);
+        divider.setBackgroundColor(0xFF61756A);
         LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
         dividerParams.topMargin = dp(24);
         statusCard.addView(divider, dividerParams);
         pickupLabel = text("승차 지점: 탑승자 지정 대기", 27);
         pickupLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        pickupLabel.setTextColor(Color.WHITE);
         add(statusCard, pickupLabel, 23);
         passengerLabel = text("탑승자 현재 위치: 공유 대기", 21);
-        passengerLabel.setTextColor(MUTED);
+        passengerLabel.setTextColor(0xFFCBDACE);
         add(statusCard, passengerLabel, 18);
-        etaLabel = text("예상 도착시간: 아직 제공되지 않음", 21);
-        etaLabel.setTextColor(MUTED);
+        etaLabel = text("예상 도착시간: 아직 제공되지 않음", 25);
+        etaLabel.setTextColor(0xFFF3D1BE);
+        etaLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         add(statusCard, etaLabel, 12);
         refreshButton = button("상태 새로고침", this::refresh);
         add(statusCard, refreshButton, 25);
@@ -291,7 +297,7 @@ public final class PickupActivity extends Activity {
         inviteLabel.setTextIsSelectable(true);
         add(actionCard, inviteLabel, 14);
         finishButton = button("픽업 완료 · 위치 공유 종료", this::finishPickup);
-        finishButton.setTextColor(0xFFB84B3E);
+        finishButton.setTextColor(0xFF9F493E);
         add(actionCard, finishButton, 18);
         messagePanel = new LinearLayout(this);
         messagePanel.setOrientation(LinearLayout.VERTICAL);
@@ -318,15 +324,15 @@ public final class PickupActivity extends Activity {
         add(right, setupCard, 0);
         add(right, actionCard, 0);
 
-        Button settingsToggle = button("데모 서버 설정  ▾", () -> {
+        Button settingsToggle = button("서버 설정  ▾", () -> {
             settingsCard.setVisibility(settingsCard.getVisibility() == View.VISIBLE
                     ? View.GONE : View.VISIBLE);
         });
         settingsToggle.setTextSize(18);
         add(body, settingsToggle, 22);
         settingsCard = card();
-        add(settingsCard, eyebrow("데모 서버 주소"), 0);
-        TextView serverHint = text("차량 앱이 연결할 시연 서버 주소입니다.", 18);
+        add(settingsCard, eyebrow("서버 주소"), 0);
+        TextView serverHint = text("차량 앱이 연결할 서버 주소입니다. 실제 계정은 HTTPS 주소를 사용합니다.", 18);
         serverHint.setTextColor(MUTED);
         add(settingsCard, serverHint, 8);
         add(settingsCard, serverField, 18);
@@ -588,9 +594,8 @@ public final class PickupActivity extends Activity {
                 runOnUiThread(() -> {
                     fetching = false;
                     if (!currentId.equals(id)) return;
-                    if (error instanceof PickupApi.ApiException
-                            && ((PickupApi.ApiException) error).status == 401) {
-                        clearSession("이전 픽업이 서버에 없어 초기화했습니다.");
+                    if (PickupApi.isTerminalSessionError(error, currentToken)) {
+                        clearSession("픽업이 종료되었거나 요청이 취소됐습니다.");
                     } else show("서버 연결 확인: " + error.getMessage());
                 });
             }
@@ -600,7 +605,9 @@ public final class PickupActivity extends Activity {
     private void renderState(JSONObject state) {
         String status = state.optString("status");
         if ("finished".equals(status) || "expired".equals(status)) {
-            clearSession("finished".equals(status) ? "픽업이 완료됐습니다." : "초대가 만료됐습니다.");
+            String reason = state.optString("endReason", "");
+            clearSession("declined".equals(reason) ? "탑승자가 픽업 요청을 거절했습니다."
+                    : "finished".equals(status) ? "픽업이 완료됐습니다." : "초대가 만료됐습니다.");
             return;
         }
         session.setText(state.optString("contactName") + "님 픽업 · "

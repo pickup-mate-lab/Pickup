@@ -18,6 +18,15 @@ final class PickupApi {
         ApiException(int status, String message) { super(message); this.status = status; }
     }
 
+    static boolean isTerminalSessionError(Exception error, String token) {
+        if (!(error instanceof ApiException)) return false;
+        int status = ((ApiException) error).status;
+        // Demo server reports a missing session or invalid session token as 401.
+        // Firebase account 401 can be a recoverable sign-in problem.
+        return status == 404 || status == 410
+                || (status == 401 && !DriverFirebaseAuth.ACCOUNT_TOKEN.equals(token));
+    }
+
     private final String baseUrl;
     private final Context context;
 
@@ -55,7 +64,7 @@ final class PickupApi {
     JSONObject location(String id, String token, double latitude, double longitude,
                         Integer etaSeconds) throws Exception {
         JSONObject body = new JSONObject().put("lat", latitude).put("lon", longitude);
-        if (etaSeconds != null) body.put("etaSeconds", etaSeconds);
+        body.put("etaSeconds", etaSeconds == null ? JSONObject.NULL : etaSeconds);
         return request("POST", "/api/sessions/" + id + "/location", token, body);
     }
 

@@ -47,12 +47,17 @@ public final class DriverLocationService extends Service implements LocationList
     private int pendingRevision = -1;
     private boolean checking;
     private long routeRetryAfter;
+    private long lastEtaRefresh;
     private final HashSet<String> seenPassengerMessages = new HashSet<>();
     private boolean messagesInitialized;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (sessionId == null) return;
             checkPickup();
+            if (navigation != null && System.currentTimeMillis() - lastEtaRefresh >= 15000) {
+                lastEtaRefresh = System.currentTimeMillis();
+                navigation.refreshEta();
+            }
             main.postDelayed(this, 3000);
         }
     };
@@ -105,20 +110,7 @@ public final class DriverLocationService extends Service implements LocationList
             try { messageReader = new PassengerMessageReader(this, this::updateNotification); }
             catch (RuntimeException | LinkageError error) { updateNotification("메시지 음성 읽기를 사용할 수 없습니다."); }
         }
-        if (navigation == null) {
-            navigation = new PleosNavigation(this, new PleosNavigation.Listener() {
-                @Override public void onStatus(String status) { updateNotification(status); }
-                @Override public void onEtaSeconds(Integer seconds) {
-                    etaSeconds = seconds;
-                    if (lastLocation != null) send(lastLocation, true);
-                }
-                @Override public void onRouteCompleted() { confirmRoutedPickup(); }
-                @Override public void onRouteFailed() {
-                    pendingRevision = -1;
-                    routeRetryAfter = System.currentTimeMillis() + 15000;
-                }
-            });
-        }
+        if (navigation == null) initializeNavigation();
         main.removeCallbacks(poll);
         main.post(poll);
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
@@ -141,6 +133,28 @@ public final class DriverLocationService extends Service implements LocationList
         }
         if (last != null) send(last, true);
         return START_NOT_STICKY;
+    }
+
+    private void initializeNavigation() {
+        navigation = new PleosNavigation(this, new PleosNavigation.Listener() {
+            @Override public void onStatus(String status) { updateNotification(status); }
+            @Override public void onEtaSeconds(Integer seconds) {
+                etaSeconds = seconds;
+                if (lastLocation != null) send(lastLocation, true);
+            }
+            @Override public void onRouteCompleted() { confirmRoutedPickup(); }
+            @Override public void onRouteFailed() {
+                pendingRevision = -1;
+                routeRetryAfter = System.currentTimeMillis() + 15000;
+                // Also recover from a failed SDK initialization, not just route errors.
+                main.post(() -> {
+                    if (navigation != null) { navigation.close(); navigation = null; }
+                    main.postDelayed(() -> {
+                        if (sessionId != null && navigation == null) initializeNavigation();
+                    }, 15000);
+                });
+            }
+        });
     }
 
     @Override
@@ -174,7 +188,7 @@ public final class DriverLocationService extends Service implements LocationList
                     }
                     messagesInitialized = true;
                     if ("finished".equals(status) || "expired".equals(status)) {
-                        stopSelf();
+                        endMissingSession(currentId);
                         return;
                     }
                     if (target != null) {
@@ -189,9 +203,26 @@ public final class DriverLocationService extends Service implements LocationList
                     }
                 });
             } catch (Exception error) {
-                main.post(() -> checking = false);
+                main.post(() -> {
+                    checking = false;
+                    if (!currentId.equals(sessionId)) return;
+                    if (PickupApi.isTerminalSessionError(error, currentToken)) {
+                        endMissingSession(currentId);
+                    }
+                });
             }
         });
+    }
+
+    // Only an authoritative terminal response ends sharing. Connectivity and
+    // authentication errors remain retryable and must not erase a valid trip.
+    private void endMissingSession(String endedId) {
+        if (!endedId.equals(sessionId)) return;
+        android.content.SharedPreferences prefs = getSharedPreferences("PickupActivity", MODE_PRIVATE);
+        if (endedId.equals(prefs.getString("id", null))) {
+            prefs.edit().remove("id").remove("driverToken").remove("passengerToken").apply();
+        }
+        stopSelf();
     }
 
     // A route request is asynchronous. Confirm only the revision whose route
